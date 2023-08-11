@@ -9,7 +9,7 @@ DB_FAISS_PATH = "vectorstores/db_faiss"
 
 custom_prompt_template = """ Use the following pieces of information to answer the user's question. If you don't know the answer, please just say that you don't know the answer, don't try to make up an answer.
 
-Context: {}
+Context: {context}
 Question: {question}
 
 Only returns the helpful answer below and nothing else.
@@ -17,10 +17,12 @@ Helpful answer:
 """
 
 #set custom prompt
-def set_custom_prompt():
+def set_custom_prompt(context, question):
     """
     Prompt template for QA retrieval for each vector stores
     """
+    #question = cl.user.message.content
+    #prompt = PromptTemplate(template=custom_prompt_template, input_variables=['context', str(question)])
     prompt = PromptTemplate(template=custom_prompt_template, input_variables=['context', 'question'])
     return prompt
 
@@ -40,18 +42,18 @@ def retrieval_qa_chain(llm,prompt,db):
         llm = llm,  # Language model
         chain_type= "stuff",
         retriever = db.as_retriever(search_kwargs={'k':2}), # Vector store
-        return_source_document = True,
+        #return_source_document = True,
         chain_type_kwargs={'prompt': prompt}
     )
     return qa_chain
 
 # return qa chain
-def qa_bot():
+def qa_bot(context, question):
     embeddings = HuggingFaceBgeEmbeddings(model_name = 'sentence-transformers/all-MiniLM-L6-v2', model_kwargs = {'device' : 'cpu'})
 
     db = FAISS.load_local(DB_FAISS_PATH, embeddings)
     llm = load_llm()
-    qa_prompt = set_custom_prompt()
+    qa_prompt = set_custom_prompt(context, question)
     qa = retrieval_qa_chain(llm,qa_prompt,db)
     return qa
 
@@ -66,10 +68,12 @@ def final_result(query):
 # to start the app
 @cl.on_chat_start
 async def start():
-    chain = qa_bot()
+    context = "Your initial context is here!"
+    question = "Your initial question is here!"
+    chain = qa_bot(context, question)
     msg = cl.Message(content="Starting the bot") # initial message can be modified
     await msg.send()
-    msg.content = "hey, welcome to the bot bhenchod" # header of the chat
+    msg.content = "hey, welcome to the bot" # header of the chat
     await msg.update()
     cl.user_session.set("chain", chain)
 
@@ -77,14 +81,15 @@ async def start():
 # to send the message
 @cl.on_message
 async def main(message):
-    chain = cl.user_session.set("chain")
-    cb = cl.AsyncLangchainCallbackHandler(
-        stream_final_answer=True, answer_prefix_tokens = ["FINAL", "ANSWER"]
-        )
-    cb.answer_reached=True
-    res = await chain.acall(message,callback=[cb])
+    chain = cl.user_session.get("chain")
+    
+    # cb = cl.AsyncLangchainCallbackHandler(
+    #     stream_final_answer=True, answer_prefix_tokens = ["FINAL", "ANSWER"]
+    #     )
+    # cb.answer_reached=True
+    res = await chain.acall(message)
     answer = res["result"]
-    sources = res["sources_documnets"]
+    sources = res.get("sources_documents", [])
 
     if sources:
         answer += f"\nSources:" + str(sources)
